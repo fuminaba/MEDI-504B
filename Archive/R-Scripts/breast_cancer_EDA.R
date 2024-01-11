@@ -112,6 +112,10 @@ gather(bc_data4, x, y, clump_thickness:mitosis) %>%  # selecting data pairs
   geom_density(alpha = 0.3) +
   facet_wrap( ~ x, scales = "free", ncol = 3)
 
+
+##########################
+###### BREAK POINT 1 #####
+##########################
 # Create correlation matrices
 # Benign
 co_mat_benign <- filter(bc_data4, classes == "benign") %>%
@@ -167,6 +171,10 @@ plot(c_g_malignant_2, g_malignant_2,
 
 # The nodes in the graph represent each feature, and edge between the two nodes indicates that the features are correlated
 
+
+##########################
+###### BREAK POINT 2 #####
+##########################
 
 # Principal Component Analysis
 library(ellipse)
