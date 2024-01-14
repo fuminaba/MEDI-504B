@@ -1,1 +1,93 @@
-*User Story
+
+---
+output:beamer_presentation
+---
+# Data Exploratory Analysis
+
+## Data Preparation
+
+```{r, echo=FALSE}
+library(tidyverse) # for tidy data analysis
+library(readr)     # for fast reading of input files
+library(here)
+diabetic_data0 <-  read.csv(here("Datasets", "diabetic_retinopathyDataSet_train.csv"), header = TRUE, stringsAsFactors = F)
+
+
+names (diabetic_data0) <-  c("quality", 
+                      "pre_screening", 
+                      "ma1", 
+                      "ma2", 
+                      "ma3", 
+                      "ma4", 
+                      "ma5", 
+                      "ma6", 
+                      "exudate1", 
+                      "exudate2", 
+                      "exudate3",
+                      "exudate4",
+                      "exudate5", 
+                      "exudate6", 
+                      "exudate7",
+                      "exudate8",
+                      "macula_opticdisc_distance",
+                      "opticdisc_diameter",
+                      "am_fm_classification",
+                      "classes"
+                      )
+
+
+
+diabetic_data1 <- diabetic_data0 %>%
+  dplyr::mutate(classes = ifelse(classes == 0, "No",
+                          ifelse(classes == 1, "Sign", NA)))
+
+
+
+# Missing Data---
+# use only complete cases
+# Missing values can be imputed we will see this later-- for now we will remove!
+diabetic_data2 <- diabetic_data1[complete.cases(diabetic_data1),]
+diabetic_pred <- diabetic_data2 %>% select(-classes)
+diabetic_class <- diabetic_data2$classes
+```
+
+We can print the summary of data.
+```{r}
+# Exploratory Data Analysis----
+summary(diabetic_data1) # Basic 
+```
+## Data Exploratary Analysis
+We can also try to use the library `DataExplorer` to automated EDA.
+From the auto-generated report, we can conclude that
+
+*  There is no missing observation.
+*  From boxplots and histograms, the distribution of the `ma*` variables have same distribution and highly correlated. So are the `exudate*` variables.
+*  From QQ-plot, Only the variables `macula_opticdisc_distance` and `opticdisc_diameter` have approximate normal distribution. Other variables are very far from normal distribution.
+
+```{r, echo=FALSE}
+library(DataExplorer)
+##run the following line to see the auto-generated EDA
+#invisible(create_report(diabetic_data1)) 
+```
+The bar plot of two classes is drawn. Notice that we have more "Sign" than "No"-- there is a class imbalance.
+```{r, echo=FALSE}
+ggplot(diabetic_data2, aes(x = classes, fill = classes)) + geom_bar()
+```
+
+The boxplots below show that most of continous random variables have heavy-tail(right-skew) distribution.
+```{r, echo=FALSE}
+g <- ggplot(stack(diabetic_pred), aes(x = ind, y = values)) + geom_boxplot() + 
+  labs(title = "Boxplots of columns") + labs(x = "", y = "Values") + 
+  scale_y_continuous(breaks = seq(0, 100, by = 10))+
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust=1),
+    legend.position = "none",
+    axis.title = element_text(size = 16),
+    panel.grid = element_blank()
+  )
+
+g +
+  geom_jitter(size = 2, alpha = 0.25, width = 0.2) +
+  stat_summary(fun = mean, geom = "point", size = 5)
+
+
+```
