@@ -1,52 +1,55 @@
 
 ---
-output:beamer_presentation
+
 ---
 # Data Exploratory Analysis
+MEDI-504B Team 2
+
+## Dataset Metadata 
+| Variable Name | Column # | Role | Type | Description |   
+| --- | --- | --- | --- | --- |   
+| quality | 0 | Feature | Binary | 0 = bad quality, 1 = sufficient quality |  
+| pre_screening | 1 | Feature | Binary | The binary result of pre-screening, where 1 indicates severe retinal abnormality and 0 its lack.|  
+| ma1-6 | 2 - 7 | Feature | Integer | ma1 - ma-6 contain the results of MA detection. Each feature value stand for the number of microaneurysms (MAs) found at the confidence levels alpha = 0.5, . . . , 1, respectively. |  
+| exudate1-8 | 8 - 15 | Feature | Continuous | exudate1 - exudate8 contain the same information as 2-7) for exudates. However, as exudates are represented by a set of points rather than the number of pixels constructing the lesions, these features are normalized by dividing the number of lesions with the diameter of the ROI to compensate different image sizes. |  
+| macula_opticdisc_distance | 16 | Feature | Continuous | The euclidean distance of the center of the macula and the center of the optic disc to provide important information regarding the patient's condition. This feature is also normalized with the diameter of the ROI.|  
+| opticdisc_diameter | 17 | Feature | Continous | The diameter of the optic disc |  
+| am_fm_classification | 18 | Feature | Continous | The diameter of the optic disc |  
+| Class | 19 | Target | Binary | Class label, 1 = signs of DR, 0 = no sign of DR | 
 
 ## Data Preparation
 
-```{r, echo=FALSE}
+```{r, echo=FALSE, message=FALSE}
 library(tidyverse) # for tidy data analysis
 library(readr)     # for fast reading of input files
 library(here)
-diabetic_data0 <-  read.csv(here("Datasets", "diabetic_retinopathyDataSet_train.csv"), header = TRUE, stringsAsFactors = F)
+```
 
+```{r, echo=FALSE}
+diabetic_data0 <- 
+    here("Datasets", "diabetic_retinopathyDataSet_train.csv") %>% 
+    read.csv(header = TRUE, stringsAsFactors = F)
 
-names (diabetic_data0) <-  c("quality", 
-                      "pre_screening", 
-                      "ma1", 
-                      "ma2", 
-                      "ma3", 
-                      "ma4", 
-                      "ma5", 
-                      "ma6", 
-                      "exudate1", 
-                      "exudate2", 
-                      "exudate3",
-                      "exudate4",
-                      "exudate5", 
-                      "exudate6", 
-                      "exudate7",
-                      "exudate8",
-                      "macula_opticdisc_distance",
-                      "opticdisc_diameter",
-                      "am_fm_classification",
-                      "classes"
-                      )
-
-
+names(diabetic_data0) <-  
+    c("quality", "pre_screening", 
+      "ma1", "ma2", "ma3", "ma4", "ma5", "ma6", 
+      "exudate1", "exudate2", "exudate3", "exudate4",
+      "exudate5", "exudate6", "exudate7","exudate8",
+      "macula_opticdisc_distance", "opticdisc_diameter",
+      "am_fm_classification", "classes")
 
 diabetic_data1 <- diabetic_data0 %>%
   dplyr::mutate(classes = ifelse(classes == 0, "No",
                           ifelse(classes == 1, "Sign", NA)))
 
-
-
 # Missing Data---
 # use only complete cases
 # Missing values can be imputed we will see this later-- for now we will remove!
-diabetic_data2 <- diabetic_data1[complete.cases(diabetic_data1),]
+diabetic_data2 <- diabetic_data1[complete.cases(diabetic_data1),] %>% 
+    filter(quality == 1) %>% 
+    select(-quality)
+
+# Split into predictor data and class data
 diabetic_pred <- diabetic_data2 %>% select(-classes)
 diabetic_class <- diabetic_data2$classes
 ```
@@ -56,6 +59,7 @@ We can print the summary of data.
 # Exploratory Data Analysis----
 summary(diabetic_data1) # Basic 
 ```
+
 ## Data Exploratary Analysis
 We can also try to use the library `DataExplorer` to automated EDA.
 From the auto-generated report, we can conclude that
@@ -69,25 +73,57 @@ library(DataExplorer)
 ##run the following line to see the auto-generated EDA
 #invisible(create_report(diabetic_data1)) 
 ```
-The bar plot of two classes is drawn. Notice that we have more "Sign" than "No"-- there is a class imbalance.
+The bar plot of two classes is drawn. Notice that we have more "Sign" than "No"-- there is a slight class imbalance.
 ```{r, echo=FALSE}
 ggplot(diabetic_data2, aes(x = classes, fill = classes)) + geom_bar()
 ```
 
+```{r}
+# Calculate the proportion of data belonging to each class
+class.sign.prop <- 
+    nrow(diabetic_data2[diabetic_data2$classes=='Sign',]) / nrow(diabetic_data2)
+class.no.prop <- 
+    nrow(diabetic_data2[diabetic_data2$classes=='No',]) / nrow(diabetic_data2)
+
+print(paste(
+    "Proportion of class 'Sign':", 
+    class.sign.prop, 
+    "Proportion of 'No':", 
+    class.no.prop))
+```
+However, the split seems fairly even, thus it may not be necessary to make class imbalance changes when training predictive models. 
+
 The boxplots below show that most of continous random variables have heavy-tail(right-skew) distribution.
 ```{r, echo=FALSE}
-g <- ggplot(stack(diabetic_pred), aes(x = ind, y = values)) + geom_boxplot() + 
-  labs(title = "Boxplots of columns") + labs(x = "", y = "Values") + 
-  scale_y_continuous(breaks = seq(0, 100, by = 10))+
-  theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust=1),
-    legend.position = "none",
-    axis.title = element_text(size = 16),
-    panel.grid = element_blank()
-  )
+options(repr.plot.width = 10,repr.plot.height = 2.5) #repr.plot.res = 100)
+feature.vals.boxplot <- 
+    ggplot(stack(diabetic_pred), aes(x = ind, y = values)) + 
+    geom_boxplot() + 
+    labs(
+        title = "Boxplots of feature values",
+        x = "Feature Names",
+        y = "Values") + 
+    scale_y_continuous(breaks = seq(0, 1000, by = 20)) +
+    theme(
+        axis.text.x = element_text(angle = 60, hjust = 1, vjust=1),
+        legend.position = "none",
+        axis.title = element_text(size = 12),
+        panel.grid = element_blank()
+    )
 
-g +
-  geom_jitter(size = 2, alpha = 0.25, width = 0.2) +
-  stat_summary(fun = mean, geom = "point", size = 5)
+feature.vals.boxplot +
+    geom_jitter(size = 1, alpha = 0.25, width = 0.2) +
+    stat_summary(fun = mean, geom = "point", size = 2, color = 'yellow') 
+```
 
-
+```{r}
+# Create correlation matrices
+# For patients with no sign of diabetic retinopathy
+corr.matrix.no.DR <- filter(diabetic_data2, classes == "No") %>%
+  select(-classes) %>%
+  cor()
+# For patients with signs of diabetic retinopathy
+corr.matrix.signs.DR <- filter(diabetic_data2, classes == "Sign") %>%
+  select(-classes) %>%
+  cor()
 ```
