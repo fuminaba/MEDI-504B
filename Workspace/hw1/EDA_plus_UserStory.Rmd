@@ -71,7 +71,7 @@ From the auto-generated report, we can conclude that
 ```{r, echo=FALSE}
 library(DataExplorer)
 ##run the following line to see the auto-generated EDA
-#invisible(create_report(diabetic_data1)) 
+invisible(create_report(diabetic_data1)) 
 ```
 The bar plot of two classes is drawn. Notice that we have more "Sign" than "No"-- there is a slight class imbalance.
 ```{r, echo=FALSE}
@@ -126,6 +126,9 @@ corr.matrix.no.DR <- filter(diabetic_data2, classes == "No") %>%
 corr.matrix.signs.DR <- filter(diabetic_data2, classes == "Sign") %>%
   select(-classes) %>%
   cor()
+
+corr.matrix.no.DR
+corr.matrix.signs.DR
 ```
 
 Principal Component Analysis
