@@ -71,7 +71,7 @@ From the auto-generated report, we can conclude that
 ```{r, echo=FALSE}
 library(DataExplorer)
 ##run the following line to see the auto-generated EDA
-#invisible(create_report(diabetic_data1)) 
+invisible(create_report(diabetic_data1)) 
 ```
 The bar plot of two classes is drawn. Notice that we have more "Sign" than "No"-- there is a slight class imbalance.
 ```{r, echo=FALSE}
@@ -126,4 +126,62 @@ corr.matrix.no.DR <- filter(diabetic_data2, classes == "No") %>%
 corr.matrix.signs.DR <- filter(diabetic_data2, classes == "Sign") %>%
   select(-classes) %>%
   cor()
+
+corr.matrix.no.DR
+corr.matrix.signs.DR
 ```
+
+Principal Component Analysis
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(ellipse)
+```
+perform pca and extract scores
+```{r}
+pcaOutput <- prcomp(as.matrix(select(diabetic_data2, -classes)), scale = TRUE, center = TRUE)
+pcaOutput2 <- as.data.frame(pcaOutput$x)
+PoV <- pcaOutput$sdev^2/sum(pcaOutput$sdev^2)
+PoV
+# define groups for plotting
+pcaOutput2$groups <- diabetic_data2$classes
+centroids <- aggregate(cbind(PC1, PC2) ~ groups, pcaOutput2, mean)
+conf.rgn  <- do.call(rbind, lapply(unique(pcaOutput2$groups), function(t)
+  data.frame(groups = as.character(t),
+             ellipse(cov(pcaOutput2[pcaOutput2$groups == t, 1:2]),
+                     centre = as.matrix(centroids[centroids$groups == t, 2:3]),
+                     level = 0.95),
+             stringsAsFactors = FALSE)))
+```
+```{r, fig.height=6, fig.width=10}
+g1 <- ggplot(data = pcaOutput2, aes(x = PC1, y = PC2, group = groups, color = groups)) + 
+  geom_polygon(data = conf.rgn, aes(fill = groups), alpha = 0.2) +
+  geom_point(size = 2, alpha = 0.6) + 
+  labs(color = "",
+       fill = "") 
+# Can also make output more informative
+g2 <- g1+
+  labs(x = paste0("PC1: ", round(PoV[1], digits = 2) * 100, "% variance"),
+       y = paste0("PC2: ", round(PoV[2], digits = 2) * 100, "% variance"))
+g2
+```
+Basic summary stats
+```{r}
+psych::describeBy(diabetic_data2)
+psych::describeBy(diabetic_pred, diabetic_class)
+# a better looking table
+arsenal::tableby(classes~., data = diabetic_data2, total= TRUE) %>% summary(text = TRUE)
+```
+
+
+## User Stories 
+| User | Stories | Refined Stories | Extracted Tasks | 
+| :--- | :--- | :--- | :--- | 
+| Patients | I would like a quick and accurate diagnosis tool so I don’t have to undergo unnecessary exams and procedures, or get misdiagnosed for something I don’t have and have eye surgery. | I would like a predictive model that is at least 95% sensitive and specific, (AUC as high as possible) with an emphasis on sensitivity so possibility of retinopathy is not missed. | TBD | 
+| Family Members | I would like a predictive model with minimal false negatives and false positives to screen for diabetic retinopathy, so I can make informed clinical decisions.| I would want a predictive model that has the highest specificity, at least 90%, so my family member does not need to undergo unnecessary treatment and stress. | TBD |  
+| Primary Physician | I would like a predictive model with minimal false negatives and false positives to screen for diabetic retinopathy, so I can make informed clinical decisions. | I would like a predictive model with high AUC validated on external data so I can make informed clinical decisions with confidence | TBD | 
+| Ophthalmologist | I would like an accurate, easy-to-use and interpretable model to help me detect diabetic retinopathy when clients come in for exams. | This model should have high sensitivity so I can refer them to the required further tests to investigate the probability of retinopathy | TBD | 
+| Insurance company | I want to have an accurate prediction model on if clients are likely to get diabetic retinopathy so that I can make the insurance plan more profitable based on people’s health conditions. | The model should have very high sensitivity, over 95% so we can incorporate any probability of patients developing retinopathy into the insurance plan. It is okay to have high false negatives, since that will be more beneficial for the company. | TBD | 
+| Public Heath Researchers | I would like a model to gather data on the likelihood of diabetic retinopathy in certain populations to make informative communication and decisions with the public. |  | TBD | 
+ 
+
+
+

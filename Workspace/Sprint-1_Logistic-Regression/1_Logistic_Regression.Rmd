@@ -1,0 +1,98 @@
+
+
+# Logistic Regression - Detecting Signs of Diabetic Retinopathy 
+MEDI-504B  
+
+## Dataset Metadata 
+| Variable Name | Column # | Role | Type | Description |   
+| --- | --- | --- | --- | --- |   
+| quality | 0 | Feature | Binary | 0 = bad quality, 1 = sufficient quality |  
+| pre_screening | 1 | Feature | Binary | The binary result of pre-screening, where 1 indicates severe retinal abnormality and 0 its lack.|  
+| ma1-6 | 2 - 7 | Feature | Integer | ma1 - ma-6 contain the results of MA detection. Each feature value stand for the number of microaneurysms (MAs) found at the confidence levels alpha = 0.5, . . . , 1, respectively. |  
+| exudate1-8 | 8 - 15 | Feature | Continuous | exudate1 - exudate8 contain the same information as 2-7) for exudates. However, as exudates are represented by a set of points rather than the number of pixels constructing the lesions, these features are normalized by dividing the number of lesions with the diameter of the ROI to compensate different image sizes. |  
+| macula_opticdisc_distance | 16 | Feature | Continuous | The euclidean distance of the center of the macula and the center of the optic disc to provide important information regarding the patient's condition. This feature is also normalized with the diameter of the ROI.|  
+| opticdisc_diameter | 17 | Feature | Continous | The diameter of the optic disc |  
+| am_fm_classification | 18 | Feature | Continous | The diameter of the optic disc |  
+| Class | 19 | Target | Binary | Class label, 1 = signs of DR, 0 = no sign of DR | 
+
+## Dataset Preparation Steps
+```{r echo=FALSE, message=FALSE}
+library(tidyverse) # for tidy data analysis
+library(readr)     # for fast reading of input files
+library(here)
+library(bestglm)
+library(caret)
+library(pROC)
+```
+
+```{r}
+diabetic_data0 <- 
+    here("Datasets", "diabetic_retinopathyDataSet_train.csv") %>% 
+    read.csv(header = TRUE, stringsAsFactors = F)
+
+names(diabetic_data0) <-  
+    c("quality", "pre_screening", 
+      "ma1", "ma2", "ma3", "ma4", "ma5", "ma6", 
+      "exudate1", "exudate2", "exudate3", "exudate4",
+      "exudate5", "exudate6", "exudate7","exudate8",
+      "macula_opticdisc_distance", "opticdisc_diameter",
+      "am_fm_classification", "classes")
+
+diabetic_data1 <- diabetic_data0 %>%
+  dplyr::mutate(classes = ifelse(classes == 0, "No",
+                          ifelse(classes == 1, "Sign", NA)))
+
+# Missing Data---
+# use only complete cases
+# Missing values can be imputed we will see this later-- for now we will remove!
+
+```
+
+```{r}
+# Split into predictor data and class data
+diabetic_data2 <- diabetic_data1[complete.cases(diabetic_data1),] %>% 
+    filter(quality == 1) %>% 
+    select(-quality) %>%
+    mutate(classes = as_factor(classes),
+           pre_screening = as_factor(pre_screening),
+           am_fm_classification = as_factor(am_fm_classification))
+sample <- caret::createDataPartition(diabetic_data2$classes, p = 0.7, list = FALSE)
+train  <- diabetic_data2[sample, ]
+test   <- diabetic_data2[-sample, ]
+```
+
+```{r}
+train_method <- trainControl(method = "repeatedcv", 
+                             number = 5, 
+                             repeats = 3,
+                             savePredictions = TRUE,
+                             summaryFunction = twoClassSummary,
+                             classProbs = TRUE)
+
+caret_both <- train(classes ~ .,
+                    data = train,
+                    method = "glmStepAIC", 
+                    direction = "both",
+                    trControl = train_method,
+                    preProc = c("center", "scale"),
+                    metric = "Sens",
+                    trace = F)
+caret_both
+```
+```{r}
+eval_mod <- function(model, data) {
+    # Function by Dr.Aline Talhouk
+    pred <- predict(model, data)
+    cm <- caret::confusionMatrix(pred, data$classes, positive="Sign")
+    auc <- roc(data$classes,
+               predict(model, data, type = "prob")[, "Sign"]) %>% auc()
+    result <- c(cm$overall["Accuracy"],cm$byClass['Sensitivity'], cm$byClass['Specificity'], cm$byClass['F1'],AUC=auc)
+    return(result)
+}
+
+test <- test %>%
+    mutate(pre_screening = as_factor(pre_screening),
+           am_fm_classification = as_factor(am_fm_classification))
+eval <- eval_mod(caret_both, test)
+eval
+```
