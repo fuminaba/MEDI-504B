@@ -100,4 +100,21 @@ test <- test %>%
            am_fm_classification = as_factor(am_fm_classification))
 eval <- eval_mod(caret_both, test)
 eval
+
+#double check colinearity
+selected_variables <- names(coef(caret_both$finalModel))
+selected_variables <- selected_variables[c(-1, -2)]
+correlation_matrix <- cor(select(diabetic_data2,selected_variables))
+
+correlation_long <- reshape2::melt(correlation_matrix)
+
+ggplot(correlation_long, aes(Var1, Var2, fill = value)) +
+    geom_tile(color = "white") +
+    scale_fill_gradient2(low = "darkblue", mid = "white", high = "darkred", midpoint = 0) +
+    theme_minimal() +
+    labs(title = "Correlation Heatmap", x = "Variable 1", y = "Variable 2") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+#it still has some correlated columns
+
 ```
