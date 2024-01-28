@@ -78,12 +78,17 @@ caret_both <- train(classes ~ .,
                     metric = "Sens",
                     trace = F)
 caret_both
+#see which variables are selected finally
+caret_both$finalModel
+
+plot(caret_both$finalModel)
 ```
 ```{r}
 eval_mod <- function(model, data) {
     # Function by Dr.Aline Talhouk
     pred <- predict(model, data)
     cm <- caret::confusionMatrix(pred, data$classes, positive="Sign")
+    print(cm)
     auc <- roc(data$classes,
                predict(model, data, type = "prob")[, "Sign"]) %>% auc()
     result <- c(cm$overall["Accuracy"],cm$byClass['Sensitivity'], cm$byClass['Specificity'], cm$byClass['F1'],AUC=auc)
