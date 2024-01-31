@@ -1,3 +1,8 @@
+---
+output:
+  html_document: default
+  pdf_document: default
+---
 
 
 # Logistic Regression - Detecting Signs of Diabetic Retinopathy 
@@ -16,6 +21,7 @@ MEDI-504B
 | Class | 19 | Target | Binary | Class label, 1 = signs of DR, 0 = no sign of DR | 
 
 ## Dataset Preparation Steps
+We will load the required packages first.
 ```{r echo=FALSE, message=FALSE}
 library(tidyverse) # for tidy data analysis
 library(readr)     # for fast reading of input files
@@ -23,13 +29,18 @@ library(here)
 library(bestglm)
 library(caret)
 library(pROC)
-```
 
+source("./util_funcs.R")
+```
+The dataset, located under the `Datasets` folder can be found using the `here` package function. 
+Because we are interested in predictions, we compute a table that displays how discriminative each feature is of the outcome class in the dataset using the `tableby` function from the `arsenal` package.
 ```{r}
+# >>> Load the dataset <<< #
 diabetic_data0 <- 
     here("Datasets", "diabetic_retinopathyDataSet_train.csv") %>% 
     read.csv(header = TRUE, stringsAsFactors = F)
 
+# >>> Assign feature names <<< #
 names(diabetic_data0) <-  
     c("quality", "pre_screening", 
       "ma1", "ma2", "ma3", "ma4", "ma5", "ma6", 
@@ -38,83 +49,198 @@ names(diabetic_data0) <-
       "macula_opticdisc_distance", "opticdisc_diameter",
       "am_fm_classification", "classes")
 
+# >>> Recode numeric outcome variable to string, then factor <<< #
 diabetic_data1 <- diabetic_data0 %>%
-  dplyr::mutate(classes = ifelse(classes == 0, "No",
-                          ifelse(classes == 1, "Sign", NA)))
+    mutate(classes = ifelse(classes == 0, "No",
+                     ifelse(classes == 1, "Sign", NA))) %>%
+    mutate(classes = as_factor(classes))
 
-# Missing Data---
-# use only complete cases
-# Missing values can be imputed we will see this later-- for now we will remove!
-
+# >>> Generate Table of Feature Summary by Class <<< #
+arsenal::tableby(classes~., data = diabetic_data1, total= TRUE) %>% 
+    summary(text = TRUE)
 ```
 
+Using a confidence level ($\alpha$) of 0.05, We see that the following features:  
+`exudate1`, `exudate2`, `exudate3`, `macula_opticdisc_distance`, `opticdisc_diameter`, `am_fm_classification`  
+do not discriminate `Sign` of diabetic retinopathy and `No` sign of diabetic retinopathy very well.
+Thus we will remove these features. 
+
+To remove possibility of multicollinearity, we will look at a correlation matrix.
+```{r}
+correlation_matrix <- diabetic_data1 %>%
+    select(-c(classes)) %>%
+    cor()
+
+eda.correlation_matrix.plot <- correlation_matrix %>%
+    reshape2::melt() %>%
+    ggplot(aes(Var1, Var2, fill = value)) +
+        geom_tile(color = "white") +
+        scale_fill_gradient2(
+            low = "darkblue", 
+            mid = "white", 
+            high = "darkred", 
+            midpoint = 0) +
+        theme_minimal() +
+        labs(
+            title = "Feature Correlation Heatmap", 
+            x = "Variable 1",
+            y = "Variable 2") +
+        theme(
+            axis.text.x = element_text(angle = 45, hjust = 1))
+eda.correlation_matrix.plot
+```
+
+We see there is a heavy correlation between the `ma1-6` features and in `exudate1-3` and `exudate5-8`. Thus we will sum the `ma1-6` features (as these features are counts) and average `exudate5-8` features (these are normalized floating point values). `exudate1-3` will be removed as they are not statistically different using a $\alpha$ = 0.05. 
+
+## Data Preprocessing
+Utilizing the info from EDA above, we will perform preprocessing on the data before training the logistic regression model. 
+The preprocessing steps are summarized in the `data_preproc` function defined in `util_funcs.R`. 
+The preprocessing steps are:
+1. Filter data for quality == 1 (good quality data)
+2. Convert binary features to factors 
+3. Combine the `ma1-6` and `exudate5-8` features to avoid multicollinearity 
+4. Remove redundant (`ma1-6` and `exudate5-8`) and non-discriminatory (`macula_opticdisc_distance`, `opticdisc_diameter`, `am_fm_classification`) features
+The data will not be scaled and centered here - this will be an inherent property of the model. 
+
+We also perform a single holdout train-test split. The 'test' set here will serve as the validation dataset, and the 'train' data will be used to train a logistic regression model using `repeatedcv`.   
+We are running a cross-validation to:  
+1. Get a good estimate on model performance, and that it's not biased by train-test split
+2. Feature selection (ensure feature selection is not biased by train-test split)
 ```{r}
 # Split into predictor data and class data
 diabetic_data2 <- diabetic_data1[complete.cases(diabetic_data1),] %>% 
-    filter(quality == 1) %>% 
-    select(-quality) %>%
-    mutate(classes = as_factor(classes),
-           pre_screening = as_factor(pre_screening),
-           am_fm_classification = as_factor(am_fm_classification))
-sample <- caret::createDataPartition(diabetic_data2$classes, p = 0.7, list = FALSE)
+    data_preproc() # >>> Defined in util_funcs.R
+
+set.seed(178)
+sample <- caret::createDataPartition(diabetic_data2$classes, 
+                                     p = 0.7, 
+                                     list = FALSE)
+
 train  <- diabetic_data2[sample, ]
 test   <- diabetic_data2[-sample, ]
 ```
 
+Now that the data is ready, we wil train the logistic regression model. 
+We use a generalized logistic regression model here, using `glmStepAIC` to also include feature selection.
+Centering and scaling of the data is performed here, and the metric to optimize is Sensitivity, as this is our metric of interest for the User (patient).
+
 ```{r}
+set.seed(178)
 train_method <- trainControl(method = "repeatedcv", 
                              number = 5, 
-                             repeats = 3,
+                             repeats = 5,
                              savePredictions = TRUE,
                              summaryFunction = twoClassSummary,
                              classProbs = TRUE)
 
-caret_both <- train(classes ~ .,
-                    data = train,
-                    method = "glmStepAIC", 
-                    direction = "both",
-                    trControl = train_method,
-                    preProc = c("center", "scale"),
-                    metric = "Sens",
-                    trace = F)
-caret_both
-#see which variables are selected finally
-caret_both$finalModel
+diab_ret.glm <- train(classes ~ .,
+                      data = train,
+                      method = "glmStepAIC", 
+                      direction = "both",
+                      trControl = train_method,
+                      preProc = c("center", "scale"),
+                      metric = "Sens",
+                      trace = F)
 
-plot(caret_both$finalModel)
+diab_ret.glm
+
+# see which variables are selected finally
+diab_ret.glm$finalModel
+
+# plot(caret_both$finalModel)
 ```
-```{r}
-eval_mod <- function(model, data) {
-    # Function by Dr.Aline Talhouk
-    pred <- predict(model, data)
-    cm <- caret::confusionMatrix(pred, data$classes, positive="Sign")
-    print(cm)
-    auc <- roc(data$classes,
-               predict(model, data, type = "prob")[, "Sign"]) %>% auc()
-    result <- c(cm$overall["Accuracy"],cm$byClass['Sensitivity'], cm$byClass['Specificity'], cm$byClass['F1'],AUC=auc)
-    return(result)
-}
+Following model training, we can evaluate it on the holdout set, view the features that were selected and check the correlation between those features. 
 
-test <- test %>%
-    mutate(pre_screening = as_factor(pre_screening),
-           am_fm_classification = as_factor(am_fm_classification))
-eval <- eval_mod(caret_both, test)
-eval
+```{r}
+# >>> Run an evaluation of the model <<< #
+diab_ret.glm.eval <- eval_mod(diab_ret.glm, test)
 
 #double check colinearity
-selected_variables <- names(coef(caret_both$finalModel))
-selected_variables <- selected_variables[c(-1, -2)]
-correlation_matrix <- cor(select(diabetic_data2,selected_variables))
+# >>> Get names of selected parameters (remove 'Intercept' and factors) <<< #
+selected_variables <- names(coef(diab_ret.glm$finalModel))[c(-1,-2)]
 
-correlation_long <- reshape2::melt(correlation_matrix)
+# >>> Create correlation matrix <<<# 
+correlation_matrix <- diabetic_data2 %>%
+    select(all_of(selected_variables)) %>%
+    cor()
 
-ggplot(correlation_long, aes(Var1, Var2, fill = value)) +
-    geom_tile(color = "white") +
-    scale_fill_gradient2(low = "darkblue", mid = "white", high = "darkred", midpoint = 0) +
-    theme_minimal() +
-    labs(title = "Correlation Heatmap", x = "Variable 1", y = "Variable 2") +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+correlation_matrix.plot <- correlation_matrix %>%
+    reshape2::melt() %>%
+    ggplot(aes(Var1, Var2, fill = value)) +
+        geom_tile(color = "white") +
+        scale_fill_gradient2(
+            low = "darkblue", 
+            mid = "white", 
+            high = "darkred", 
+            midpoint = 0
+        ) +
+        theme_minimal() +
+        labs(
+            title = "Correlation Heatmap", 
+            x = "Axis 1", 
+            y = "Axis 2"
+        ) +
+        theme(
+            axis.text.x = element_text(angle = 45, hjust = 1)
+        )
 
-#it still has some correlated columns
+# >>> Display the results <<< #
+diab_ret.glm.eval
+correlation_matrix.plot
+```
 
+Our final result is a model with sensitivity ~66%. We do not seem to have multicollinearity effects. 
+
+## Regularization
+We can try to add regularization to see which features are favored. 
+
+```{r}
+train_method <- trainControl(method = "repeatedcv", 
+                             number = 5, 
+                             repeats = 5,
+                             savePredictions = TRUE,
+                             summaryFunction = twoClassSummary,
+                             classProbs = TRUE)
+
+lambda <- 10^seq(-4, 0, length = 20)
+alpha <- seq(0, 0.5, length = 6)
+
+set.seed(178)
+diab_ret.glm.lasso <- train(classes ~ .,
+                            data = train,
+                            method = "glmnet", 
+                            direction = "both",
+                            trControl = train_method,
+                            tuneGrid = expand.grid(alpha = 1, 
+                                                   lambda = lambda),
+                            preProc = c("center", "scale"),
+                            metric = "ROC",
+                            trace = F)
+lasso <- eval_mod(diab_ret.glm.lasso, test)
+
+set.seed(178)
+diab_ret.glm.ridge <- train(classes ~ .,
+                            data = train,
+                            method = "glmnet", 
+                            direction = "both",
+                            trControl = train_method,
+                            tuneGrid = expand.grid(alpha = 0, 
+                                                   lambda = lambda),
+                            preProc = c("center", "scale"),
+                            metric = "ROC",
+                            trace = F)
+ridge <- eval_mod(diab_ret.glm.ridge, test)
+
+set.seed(178)
+diab_ret.glm.enet  <- train(classes ~ .,
+                            data = train,
+                            method = "glmnet", 
+                            direction = "both",
+                            trControl = train_method,
+                            tuneGrid = expand.grid(alpha = alpha, 
+                                                   lambda = lambda),
+                            preProc = c("center", "scale"),
+                            metric = "ROC",
+                            trace = F)
+enet <- eval_mod(diab_ret.glm.enet, test)
 ```
