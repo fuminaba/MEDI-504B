@@ -13,7 +13,7 @@ MEDI-504B
 | --- | --- | --- | --- | --- |   
 | quality | 0 | Feature | Binary | 0 = bad quality, 1 = sufficient quality |  
 | pre_screening | 1 | Feature | Binary | The binary result of pre-screening, where 1 indicates severe retinal abnormality and 0 its lack.|  
-| ma1-6 | 2 - 7 | Feature | Integer | ma1 - ma-6 contain the results of MA detection. Each feature value stand for the number of microaneurysms (MAs) found at the confidence levels alpha = 0.5, . . . , 1, respectively. |  
+| ma1-6 | 2 - 7 | Feature | Integer | ma1 - ma-6 contain the results of MA detection. Each feature value stand for the number of microaneurysms (MAs) found at the confidence levels alpha = 0.05, . . . , 1, respectively. |  
 | exudate1-8 | 8 - 15 | Feature | Continuous | exudate1 - exudate8 contain the same information as 2-7) for exudates. However, as exudates are represented by a set of points rather than the number of pixels constructing the lesions, these features are normalized by dividing the number of lesions with the diameter of the ROI to compensate different image sizes. |  
 | macula_opticdisc_distance | 16 | Feature | Continuous | The euclidean distance of the center of the macula and the center of the optic disc to provide important information regarding the patient's condition. This feature is also normalized with the diameter of the ROI.|  
 | opticdisc_diameter | 17 | Feature | Continous | The diameter of the optic disc |  
@@ -108,16 +108,25 @@ We are running a cross-validation to:
 2. Feature selection (ensure feature selection is not biased by train-test split)
 ```{r}
 # Split into predictor data and class data
-diabetic_data2 <- diabetic_data1[complete.cases(diabetic_data1),] %>% 
+diabetic_data2A <- diabetic_data1[complete.cases(diabetic_data1),] %>% 
     data_preproc() # >>> Defined in util_funcs.R
 
+diabetic_data2B <- diabetic_data1[complete.cases(diabetic_data1),] %>%
+    filter(quality == 1) %>%
+    mutate(am_fm_classification = as_factor(am_fm_classification),
+           pre_screening = as_factor(pre_screening)) %>%
+    select(-quality)
+
 set.seed(178)
-sample <- caret::createDataPartition(diabetic_data2$classes, 
+sample <- caret::createDataPartition(diabetic_data2A$classes, 
                                      p = 0.7, 
                                      list = FALSE)
 
-train  <- diabetic_data2[sample, ]
-test   <- diabetic_data2[-sample, ]
+trainA  <- diabetic_data2A[sample, ]
+testA   <- diabetic_data2A[-sample, ]
+
+trainB <- diabetic_data2B[sample, ]
+testB  <- diabetic_data2B[-sample, ]
 ```
 
 Now that the data is ready, we wil train the logistic regression model. 
@@ -125,6 +134,7 @@ We use a generalized logistic regression model here, using `glmStepAIC` to also 
 Centering and scaling of the data is performed here, and the metric to optimize is Sensitivity, as this is our metric of interest for the User (patient).
 
 ```{r}
+source("./util_funcs.R")
 set.seed(178)
 train_method <- trainControl(method = "repeatedcv", 
                              number = 5, 
@@ -133,8 +143,8 @@ train_method <- trainControl(method = "repeatedcv",
                              summaryFunction = twoClassSummary,
                              classProbs = TRUE)
 
-diab_ret.glm <- train(classes ~ .,
-                      data = train,
+diab_ret.glmA <- train(classes ~ .,
+                      data = trainA,
                       method = "glmStepAIC", 
                       direction = "both",
                       trControl = train_method,
@@ -142,25 +152,78 @@ diab_ret.glm <- train(classes ~ .,
                       metric = "Sens",
                       trace = F)
 
-diab_ret.glm
+diab_ret.glmA
 
 # see which variables are selected finally
-diab_ret.glm$finalModel
+diab_ret.glmA$finalModel
 
-# plot(caret_both$finalModel)
+#plot(diab_ret.glmA$finalModel)
+
+trainA %>%
+    mutate(exudate_mean = (exudate1)) %>%
+    ggplot(aes(x = exudate_mean)) +
+    geom_histogram(bins = 100)
 ```
+```{r}
+
+pred <- predict(diab_ret.glmA, testA, type = 'prob') 
+
+testA$logodds <- log(pred$Sign / (1 - pred$Sign))
+
+testA %>%
+    mutate(exudate1 = (exudate1)) %>%
+           #exudate_mean = cos(exudate_mean)) %>%
+    ggplot(aes(x = exudate_mean, y = logodds)) + 
+    theme_bw() + 
+    theme(
+       axis.line = element_blank(),
+       panel.grid.major = element_blank(),
+       panel.grid.minor = element_blank(),
+       panel.background = element_blank()
+    ) +
+    labs(
+        title = 'Log odds vs Mean Exudate Feature',
+        x = 'Exudate average', 
+        y = 'log odds'
+    ) + 
+    geom_point()
+    
+```
+
+
+
+```{r}
+set.seed(178)
+diab_ret.glmB <- train(classes ~ .,
+                      data = trainB,
+                      method = "glmStepAIC", 
+                      direction = "both",
+                      trControl = train_method,
+                      preProc = c("center", "scale"),
+                      metric = "Sens",
+                      trace = F)
+
+diab_ret.glmB
+
+# see which variables are selected finally
+diab_ret.glmB$finalModel
+
+plot(diab_ret.glmB$finalModel)
+
+```
+
 Following model training, we can evaluate it on the holdout set, view the features that were selected and check the correlation between those features. 
 
 ```{r}
 # >>> Run an evaluation of the model <<< #
-diab_ret.glm.eval <- eval_mod(diab_ret.glm, test)
+diab_ret.glm.eval <- eval_mod(diab_ret.glmA, testA)
 
 #double check colinearity
 # >>> Get names of selected parameters (remove 'Intercept' and factors) <<< #
-selected_variables <- names(coef(diab_ret.glm$finalModel))[c(-1,-2)]
+selected_variables <- names(coef(diab_ret.glmA$finalModel))[c(-1,-2)]
 
 # >>> Create correlation matrix <<<# 
-correlation_matrix <- diabetic_data2 %>%
+correlation_matrix <- diabetic_data2A %>%
     select(all_of(selected_variables)) %>%
     cor()
 
@@ -206,41 +269,107 @@ lambda <- 10^seq(-4, 0, length = 20)
 alpha <- seq(0, 0.5, length = 6)
 
 set.seed(178)
-diab_ret.glm.lasso <- train(classes ~ .,
-                            data = train,
-                            method = "glmnet", 
-                            direction = "both",
-                            trControl = train_method,
-                            tuneGrid = expand.grid(alpha = 1, 
-                                                   lambda = lambda),
-                            preProc = c("center", "scale"),
-                            metric = "ROC",
-                            trace = F)
-lasso <- eval_mod(diab_ret.glm.lasso, test)
+diab_ret.glm.lassoA <- train(classes ~ .,
+                             data = trainA,
+                             method = "glmnet", 
+                             direction = "both",
+                             trControl = train_method,
+                             tuneGrid = expand.grid(alpha = 1, 
+                                                    lambda = lambda),
+                             preProc = c("center", "scale"),
+                             metric = "ROC",
+                             trace = F)
+lassoA <- eval_mod(diab_ret.glm.lassoA, testA)
 
 set.seed(178)
-diab_ret.glm.ridge <- train(classes ~ .,
-                            data = train,
-                            method = "glmnet", 
-                            direction = "both",
-                            trControl = train_method,
-                            tuneGrid = expand.grid(alpha = 0, 
-                                                   lambda = lambda),
-                            preProc = c("center", "scale"),
-                            metric = "ROC",
-                            trace = F)
-ridge <- eval_mod(diab_ret.glm.ridge, test)
+diab_ret.glm.ridgeA <- train(classes ~ .,
+                             data = trainA,
+                             method = "glmnet", 
+                             direction = "both",
+                             trControl = train_method,
+                             tuneGrid = expand.grid(alpha = 0, 
+                                                    lambda = lambda),
+                             preProc = c("center", "scale"),
+                             metric = "ROC",
+                             trace = F)
+ridgeA <- eval_mod(diab_ret.glm.ridgeA, testA)
 
 set.seed(178)
-diab_ret.glm.enet  <- train(classes ~ .,
-                            data = train,
-                            method = "glmnet", 
-                            direction = "both",
-                            trControl = train_method,
-                            tuneGrid = expand.grid(alpha = alpha, 
-                                                   lambda = lambda),
-                            preProc = c("center", "scale"),
-                            metric = "ROC",
-                            trace = F)
-enet <- eval_mod(diab_ret.glm.enet, test)
+diab_ret.glm.enetA  <- train(classes ~ .,
+                             data = trainA,
+                             method = "glmnet", 
+                             direction = "both",
+                             trControl = train_method,
+                             tuneGrid = expand.grid(alpha = alpha, 
+                                                    lambda = lambda),
+                             preProc = c("center", "scale"),
+                             metric = "ROC",
+                             trace = F)
+enetA <- eval_mod(diab_ret.glm.enetA, testA)
+```
+
+
+```{r}
+saveRDS(diab_ret.glmA, "./dr_glm.RDS")
+saveRDS(diab_ret.glm.lassoA, "./dr_glm_lasso.RDS")
+saveRDS(diab_ret.glm.ridgeA, "./dr_glm_ridge.RDS")
+saveRDS(diab_ret.glm.enetA, "./dr_glm_enet.RDS")
+#diab_ret.glm.enetA$finalModel
+```
+
+
+```{r}
+train_method <- trainControl(method = "repeatedcv", 
+                             number = 5, 
+                             repeats = 5,
+                             savePredictions = TRUE,
+                             summaryFunction = twoClassSummary,
+                             classProbs = TRUE)
+
+lambda <- 10^seq(-4, 0, length = 20)
+alpha <- seq(0, 0.5, length = 6)
+
+set.seed(178)
+diab_ret.glm.lassoB <- train(classes ~ .,
+                             data = trainB,
+                             method = "glmnet", 
+                             direction = "both",
+                             trControl = train_method,
+                             tuneGrid = expand.grid(alpha = 1, 
+                                                    lambda = lambda),
+                             preProc = c("center", "scale"),
+                             metric = "ROC",
+                             trace = F)
+lassoB <- eval_mod(diab_ret.glm.lassoB, testB)
+
+set.seed(178)
+diab_ret.glm.ridgeB <- train(classes ~ .,
+                             data = trainB,
+                             method = "glmnet", 
+                             direction = "both",
+                             trControl = train_method,
+                             tuneGrid = expand.grid(alpha = 0, 
+                                                    lambda = lambda),
+                             preProc = c("center", "scale"),
+                             metric = "ROC",
+                             trace = F)
+ridgeB <- eval_mod(diab_ret.glm.ridgeB, testB)
+
+set.seed(178)
+diab_ret.glm.enetB  <- train(classes ~ .,
+                             data = trainB,
+                             method = "glmnet", 
+                             direction = "both",
+                             trControl = train_method,
+                             tuneGrid = expand.grid(alpha = alpha, 
+                                                    lambda = lambda),
+                             preProc = c("center", "scale"),
+                             metric = "ROC",
+                             trace = F)
+enetB <- eval_mod(diab_ret.glm.enetB, testB)
+```
+
+```{r}
+plot(diab_ret.glm.lassoB$finalModel)
+
 ```
