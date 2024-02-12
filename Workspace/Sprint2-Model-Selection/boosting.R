@@ -4,8 +4,10 @@ library(here)
 library(bestglm)
 library(caret)
 library(pROC)
+library(dplyr)
+library(tidyverse) # for tidy data analysis
 
-source("./util_funcs.R")
+source(here("Workspace", "Sprint-1_logistic-Regression", "util_funcs.R"))
 
 # >>> Load the dataset <<< #
 diabetic_data0 <- 
@@ -27,11 +29,7 @@ diabetic_data1 <- diabetic_data0 %>%
                           ifelse(classes == 1, "Sign", NA))) %>%
   mutate(classes = as_factor(classes))
 
-# >>> Generate Table of Feature Summary by Class <<< #
-arsenal::tableby(classes~., data = diabetic_data1, total= TRUE) %>% 
-  summary(text = TRUE)
-# Build custom AUC function to extract AUC
-# from the caret model object
+
 eval_mod <- function(model, data) {
   pred <- predict(model, data)
   cm <- caret::confusionMatrix(pred, data$classes, positive="malignant")
@@ -41,40 +39,16 @@ eval_mod <- function(model, data) {
   return(result)
 }
 
-bc_data0 <-  read.csv(paste0("http://archive.ics.uci.edu/ml/machine-learning-databases/","breast-cancer-wisconsin/breast-cancer-wisconsin.data"), header = FALSE, stringsAsFactors = F)
 
-names (bc_data0) <-  c("sample_code_number", 
-                       "clump_thickness", 
-                       "uniformity_of_cell_size", 
-                       "uniformity_of_cell_shape", 
-                       "marginal_adhesion", 
-                       "single_epithelial_cell_size", 
-                       "bare_nuclei", 
-                       "bland_chromatin", 
-                       "normal_nucleoli", 
-                       "mitosis", 
-                       "classes")
 
-str(bc_data0)
-bc_data0$bare_nuclei = as.integer(bc_data0$bare_nuclei)
-bc_data1 <- bc_data0 %>%
-  dplyr::mutate(classes = ifelse(classes == "2", "benign",
-                                 ifelse(classes == "4", "malignant", NA)))
 
-# De-duplicate observations----
-bc_data2 <- bc_data1 %>% distinct(sample_code_number,.keep_all = TRUE)
-row.names(bc_data2) <- bc_data2$sample_code_number
-bc_data3 <- bc_data2 %>% dplyr::select(-sample_code_number)
-bc_data3 <- na.omit(bc_data3)
-bc_data <- bc_data3
-
-bc_data$classes <- as.factor(bc_data$classes)
+diabetic_data1$classes <- as.factor(diabetic_data1$classes)
 
 set.seed(2024)
-index <- caret::createDataPartition(bc_data$classes, p = 0.7, list = FALSE)
+index <- caret::createDataPartition(diabetic_data1$classes, p = 0.7, list = FALSE)
 
-train_data <- bc_data[index, ]
-test_data  <- bc_data[-index, ]
+train_data <- diabetic_data1[index, ]
+test_data  <- diabetic_data1[-index, ]
 
 train_data$classes %>% table(.)
 set.seed(2024)
