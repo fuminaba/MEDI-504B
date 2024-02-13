@@ -1,0 +1,111 @@
+# Diabetic Retinopathy Early Detection Model Selection
+```{r}
+library(readr)
+library(here)
+library(bestglm)
+library(caret)
+library(pROC)
+library(dplyr)
+library(tidyverse)
+
+source(here("Workspace", "Sprint2-Model-Selection", "util_funcs.R"))
+```
+
+## Data Preprocessing Steps for Tree-Based Methods
+First we will load the data
+```{r}
+diabetic_data <- 
+    data_load("../../Datasets/diabetic_retinopathyDataSet_train.csv")
+
+set.seed(2024)
+index <- caret::createDataPartition(diabetic_data$classes, 
+                                    p = 0.7, 
+                                    list = FALSE)
+
+train_data <- diabetic_data[index, ]
+test_data  <- diabetic_data[-index, ]
+
+train_data$classes %>% table(.)
+```
+
+## XGBoost Based Methods
+```{r}
+set.seed(2024)
+
+ctrl <- trainControl(method = "repeatedcv", 
+                     number = 5, 
+                     repeats = 3,  
+                     savePredictions = TRUE,
+                     summaryFunction = twoClassSummary,
+                     classProbs = TRUE)
+```
+
+```{r}
+# >>> Fit forest <<< #
+set.seed(2024)
+forest_fit <- caret::train(classes ~ .,
+                           data = train_data,          
+                           method = "ranger",
+                           metric = "ROC",
+                           trControl = trainControl(
+                               method = "cv",
+                               number = 5, 
+                               classProbs = TRUE,
+                               summaryFunction = twoClassSummary),
+                           importance="impurity")
+
+cat(">>> \n# >>> Forest Fit - Ranger \n>>>")
+forest <- eval_mod(forest_fit,test_data)
+
+# >>> Train GBM <<< #
+set.seed(2024)
+gbm_fit <- caret::train(classes ~ .,
+                        data = train_data,
+                        method = "gbm",
+                        verbose = FALSE,
+                        metric = "Sens",
+                        trControl = ctrl)
+
+cat(">>> \n# >>> GBM Fit \n>>>")
+gbm <- eval_mod(gbm_fit,test_data)
+
+# >>> Train XGBoost Tree <<< #
+set.seed(2024)
+xgboostT_fit <- caret::train(classes ~ .,
+                             data = train_data,
+                             method = "xgbTree",
+                             verbose = FALSE,
+                             metric = "Sens",
+                             trControl = ctrl,
+                             verbosity = 0)
+
+cat(">>> \n# >>> XGBoost - Tree \n>>>")
+xgboost_tree <- eval_mod(xgboostT_fit,test_data)
+
+# >>> Train XGB Linear <<< #
+set.seed(2024)
+xgboostL_fit <- caret::train(classes ~ .,
+                             data = train_data,
+                             method = "xgbLinear",
+                             verbose = FALSE,
+                             tuneLength=5,
+                             metric = "Sens",
+                             trControl = ctrl,
+                             verbosity = 0)
+
+cat(">>> \n# >>> XGBoost - Linear \n>>>")
+xgboost_linear <- eval_mod(xgboostL_fit,test_data)
+```
+
+```{r}
+rbind(forest, gbm, xgboost_tree, xgboost_linear)
+saveRDS(xgboostL_fit, "./Models/xgboost_linear.RDS")
+saveRDS(xgboostT_fit, "./Models/xgboost_tree.RDS")
+saveRDS(gbm_fit, "./Models/gbm.RDS")
+saveRDS(forest_fit, "./Models/forest.RDS")
+```
+
+## Trees and Random Forest 
+
+
+

@@ -29,7 +29,6 @@ diabetic_data1 <- diabetic_data0 %>%
                           ifelse(classes == 1, "Sign", NA))) %>%
   mutate(classes = as_factor(classes))
 
-
 eval_mod <- function(model, data) {
   pred <- predict(model, data)
   cm <- caret::confusionMatrix(pred, data$classes, positive="malignant")
