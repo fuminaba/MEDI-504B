@@ -1,5 +1,5 @@
 # Diabetic Retinopathy Early Detection Model Selection
-```{r}
+```{r echo=FALSE, message=FALSE}
 library(readr)
 library(here)
 library(bestglm)
@@ -7,6 +7,9 @@ library(caret)
 library(pROC)
 library(dplyr)
 library(tidyverse)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
 
 source(here("Workspace", "Sprint2-Model-Selection", "util_funcs.R"))
 ```
@@ -27,18 +30,53 @@ test_data  <- diabetic_data[-index, ]
 
 train_data$classes %>% table(.)
 ```
-
-## XGBoost Based Methods
+## Logistic Regression
 ```{r}
 set.seed(2024)
-
 ctrl <- trainControl(method = "repeatedcv", 
                      number = 5, 
-                     repeats = 3,  
+                     repeats = 5,
                      savePredictions = TRUE,
                      summaryFunction = twoClassSummary,
                      classProbs = TRUE)
+
+glm_data_proc <- function(data.table) {
+    data.table <- data.table %>%
+        rowwise() %>%
+        mutate(ma_mean = mean(ma1, ma2, ma3, ma4, ma5, ma6)) %>%
+        select(-c(ma1, ma2, ma3, ma4, ma5, ma6))
+    return(data.table)
+}
+
+glm.train_data <- glm_data_proc(train_data)
+glm.test_data <- glm_data_proc(test_data)
+
+suppressWarnings({
+diab_ret.glm <- caret::train(classes ~ .,
+                      data = glm.train_data,
+                      method = "glmStepAIC", 
+                      direction = "both",
+                      trControl = ctrl,
+                      preProc = c("center", "scale"),
+                      metric = "Sens",
+                      verbose = F,
+                      trace = F,
+                      verbosity = 0)
+})
+diab_ret.glm
+
+# see which variables are selected finally
+diab_ret.glm$finalModel
 ```
+
+```{r}
+cat(">>> \n# >>> Forest Fit - Ranger \n>>>")
+glm_eval <- eval_mod(diab_ret.glm, glm.test_data)
+car::vif(diab_ret.glm$finalModel)
+```
+
+
+## XGBoost Based Methods
 
 ```{r}
 # >>> Fit forest <<< #
@@ -95,17 +133,162 @@ xgboostL_fit <- caret::train(classes ~ .,
 
 cat(">>> \n# >>> XGBoost - Linear \n>>>")
 xgboost_linear <- eval_mod(xgboostL_fit,test_data)
+
+rbind(forest, gbm, xgboost_tree, xgboost_linear)
 ```
 
 ```{r}
-rbind(forest, gbm, xgboost_tree, xgboost_linear)
 saveRDS(xgboostL_fit, "./Models/xgboost_linear.RDS")
 saveRDS(xgboostT_fit, "./Models/xgboost_tree.RDS")
 saveRDS(gbm_fit, "./Models/gbm.RDS")
 saveRDS(forest_fit, "./Models/forest.RDS")
 ```
 
-## Trees and Random Forest 
+## Trees Models 
+```{r}
+# Decision Tree
+tree_mod <- rpart(
+  formula = classes ~. ,
+  data    = train_data,
+  method  = "class"
+)
+#tree_mod
+
+tree_mod.plot <- rpart.plot(tree_mod)
+
+# Pruning
+# We prune the tree using the cost complexity criterion. Can a less deep tree give comparable results. If so, go with the shallower tree to reduce the likelihood of overfitting. We used the a parameter called complexity parameter (CP)
+
+printcp(tree_mod)
+
+# it computes the cross validation error for each value of cp CP=0.01 gives the lowest error
+opt <- which.min(tree_mod$cptable[,"xerror"])
+#get its value
+cp <- tree_mod$cptable[opt, "CP"]
+
+# we can prune the tree based on this CP
+pruned_model <- prune(tree_mod,cp)
+#plot tree
+pruned.plot <- rpart.plot(pruned_model)
+pruned.plot
+#Note that rpart will use a default CP value of 0.01 if you don’t specify one in prune.
+
+pred <- predict(object = tree_mod,   # model object 
+                newdata = test_data,
+                type="class")  # test dataset
+caret::confusionMatrix(pred,test_data$classes)
+
+set.seed(2024)
+caret_tree <- train(
+  classes ~ .,
+  data = train_data,
+  method = "rpart",
+  metric ="Sens",
+  trControl = trainControl(method = "cv", number = 5,
+                           classProbs = T, summaryFunction = twoClassSummary),
+  tuneLength = 20
+)
+caret_tree.ggplot <- ggplot(caret_tree)
+caret_tree.ggplot
+
+# caret_tree$bestTune
+caret_tree.plot <- rpart.plot(caret_tree$finalModel)
+caret_tree.plot
+
+tree <- eval_mod(caret_tree,test_data)
+
+# Treebag
+tree_bag1 <- ipred::bagging(
+                formula = classes ~ .,
+                data = train_data,
+                nbagg = 500,  
+                coob = TRUE)
+
+tree_bag1
+set.seed(2024)
+caret_bag <- train(
+  classes ~ .,
+  data = train_data,
+  method = "treebag",
+  trControl = trainControl(method = "cv", 
+                           number = 5,
+                           classProbs = T, 
+                           summaryFunction = twoClassSummary),
+  metric ="Sens",
+  nbagg = 20,  
+  control = rpart.control(minsplit = 2, cp = 0)
+)
+bag_eval <- eval_mod(caret_bag,test_data)
+
+rbind(tree, bag_eval)
+
+```
+
+## Random Forest 
+```{r}
+# Random Forest
+# Train a Random Forest
+set.seed(2024)  # for reproducibility
+rf_model <- randomForest(formula = classes ~ ., 
+                         data = train_data)
+
+# Print the model output                             
+#print(rf_model)
+
+caret_rf <- train(
+  classes ~ .,
+  data = train_data,                         
+  method = "ranger",
+  metric = "Sens",
+  trControl = trainControl(method = "cv", number = 5,
+                           classProbs = TRUE, summaryFunction = twoClassSummary),
+  importance = "impurity"
+)
+
+forest <- eval_mod(caret_rf,test_data)
+
+# Using grid search
+control <- trainControl(method="cv", number=5, search="grid")
+set.seed(2024)
+tunegrid <- expand.grid(.mtry=c(5:15))
+
+train_ctrl <- trainControl(method="cv", 
+                           number=5, 
+                           search = "grid" ,
+                           classProbs = TRUE, 
+                           summaryFunction = twoClassSummary,
+                           selectionFunction = "best",
+                           returnResamp = "all",
+                           savePredictions = TRUE,
+                           verboseIter = FALSE)
+
+model_cv_grid <- train(classes ~ .,
+                       data = train_data,
+                       method = "rf", 
+                       metric = "Sens", 
+                       trControl = train_ctrl, 
+                       tuneGrid = tunegrid) 
+
+model_cv_grid.plot <- plot(model_cv_grid)
+
+optimal_mtry <- model_cv_grid$bestTune$mtry
+optimal_rf <- randomForest(classes ~ .,
+                           data = train_data,
+                           mtry = optimal_mtry,
+                           importance = TRUE, 
+                           keep.forest = TRUE
+)
+rf_grid <- eval_mod(optimal_rf, test_data)
+rbinded.metrics <- rbind(tree, bag_eval, forest, rf_grid, gbm, xgboost_tree, xgboost_linear)
+
+
+optimal_rf.varimp <- varImpPlot(optimal_rf)
+saveRDS(tree, "./Models/Decision_Tree.RDS")
+saveRDS(bag, "./Models/Bagging.RDS")
+saveRDS(forest, "./Models/Forest.RDS")
+saveRDS(rf_grid, "./Models/rf_grid.RDS")
+```
+
 
 
 
